@@ -17,12 +17,6 @@ To point this at a different video, just change VIDEO_ID below.
 """
 
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
-)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
@@ -67,15 +61,28 @@ def get_embeddings():
 
 
 @st.cache_data(show_spinner=False)
-def fetch_transcript(video_id: str) -> str:
-    ytt_api = YouTubeTranscriptApi()
-    fetched = ytt_api.fetch(video_id, languages=["en"])
-    return " ".join(snippet.text for snippet in fetched)
+def load_transcript() -> str:
+    """Load the pre-fetched transcript bundled with the app.
+
+    YouTube blocks transcript requests from cloud/datacenter IPs (including
+    Streamlit Cloud), so the transcript is fetched once locally (see
+    fetch_transcript_locally.py) and saved as transcript.txt, which is
+    read here instead of calling the YouTube API live.
+    """
+    try:
+        with open("transcript.txt", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        st.error(
+            "transcript.txt not found. Run fetch_transcript_locally.py on "
+            "your own machine and add the resulting transcript.txt to this repo."
+        )
+        st.stop()
 
 
 @st.cache_resource(show_spinner=False)
 def build_vector_store(video_id: str):
-    transcript = fetch_transcript(video_id)
+    transcript = load_transcript()
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
     )
@@ -127,15 +134,6 @@ with chat_col:
         with st.spinner("Loading transcript and building index..."):
             vector_store = build_vector_store(VIDEO_ID)
             llm = get_llm()
-    except TranscriptsDisabled:
-        st.error("Captions are disabled for this video.")
-        st.stop()
-    except NoTranscriptFound:
-        st.error("No transcript found in the requested language(s).")
-        st.stop()
-    except VideoUnavailable:
-        st.error("This video is unavailable.")
-        st.stop()
     except KeyError:
         st.error("Missing OPENROUTER_API_KEY in Streamlit secrets.")
         st.stop()
